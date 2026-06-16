@@ -9,38 +9,163 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as AuthRouteImport } from './routes/auth'
+import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedPayoutsRouteImport } from './routes/_authenticated/payouts'
+import { Route as AuthenticatedLiveRouteImport } from './routes/_authenticated/live'
+import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedApprovalsRouteImport } from './routes/_authenticated/approvals'
+import { Route as ApiPublicGhostWebhookRouteImport } from './routes/api/public/ghost-webhook'
+import { Route as AuthenticatedStreamsNewRouteImport } from './routes/_authenticated/streams.new'
+import { Route as AuthenticatedStreamsStreamIdRouteImport } from './routes/_authenticated/streams.$streamId'
 
+const AuthRoute = AuthRouteImport.update({
+  id: '/auth',
+  path: '/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
+  id: '/_authenticated',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedPayoutsRoute = AuthenticatedPayoutsRouteImport.update({
+  id: '/payouts',
+  path: '/payouts',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedLiveRoute = AuthenticatedLiveRouteImport.update({
+  id: '/live',
+  path: '/live',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedApprovalsRoute = AuthenticatedApprovalsRouteImport.update({
+  id: '/approvals',
+  path: '/approvals',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const ApiPublicGhostWebhookRoute = ApiPublicGhostWebhookRouteImport.update({
+  id: '/api/public/ghost-webhook',
+  path: '/api/public/ghost-webhook',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedStreamsNewRoute = AuthenticatedStreamsNewRouteImport.update({
+  id: '/streams/new',
+  path: '/streams/new',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedStreamsStreamIdRoute =
+  AuthenticatedStreamsStreamIdRouteImport.update({
+    id: '/streams/$streamId',
+    path: '/streams/$streamId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/auth': typeof AuthRoute
+  '/approvals': typeof AuthenticatedApprovalsRoute
+  '/dashboard': typeof AuthenticatedDashboardRoute
+  '/live': typeof AuthenticatedLiveRoute
+  '/payouts': typeof AuthenticatedPayoutsRoute
+  '/streams/$streamId': typeof AuthenticatedStreamsStreamIdRoute
+  '/streams/new': typeof AuthenticatedStreamsNewRoute
+  '/api/public/ghost-webhook': typeof ApiPublicGhostWebhookRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/auth': typeof AuthRoute
+  '/approvals': typeof AuthenticatedApprovalsRoute
+  '/dashboard': typeof AuthenticatedDashboardRoute
+  '/live': typeof AuthenticatedLiveRoute
+  '/payouts': typeof AuthenticatedPayoutsRoute
+  '/streams/$streamId': typeof AuthenticatedStreamsStreamIdRoute
+  '/streams/new': typeof AuthenticatedStreamsNewRoute
+  '/api/public/ghost-webhook': typeof ApiPublicGhostWebhookRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
+  '/auth': typeof AuthRoute
+  '/_authenticated/approvals': typeof AuthenticatedApprovalsRoute
+  '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/live': typeof AuthenticatedLiveRoute
+  '/_authenticated/payouts': typeof AuthenticatedPayoutsRoute
+  '/_authenticated/streams/$streamId': typeof AuthenticatedStreamsStreamIdRoute
+  '/_authenticated/streams/new': typeof AuthenticatedStreamsNewRoute
+  '/api/public/ghost-webhook': typeof ApiPublicGhostWebhookRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/auth'
+    | '/approvals'
+    | '/dashboard'
+    | '/live'
+    | '/payouts'
+    | '/streams/$streamId'
+    | '/streams/new'
+    | '/api/public/ghost-webhook'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/auth'
+    | '/approvals'
+    | '/dashboard'
+    | '/live'
+    | '/payouts'
+    | '/streams/$streamId'
+    | '/streams/new'
+    | '/api/public/ghost-webhook'
+  id:
+    | '__root__'
+    | '/'
+    | '/_authenticated'
+    | '/auth'
+    | '/_authenticated/approvals'
+    | '/_authenticated/dashboard'
+    | '/_authenticated/live'
+    | '/_authenticated/payouts'
+    | '/_authenticated/streams/$streamId'
+    | '/_authenticated/streams/new'
+    | '/api/public/ghost-webhook'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
+  AuthRoute: typeof AuthRoute
+  ApiPublicGhostWebhookRoute: typeof ApiPublicGhostWebhookRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -48,22 +173,85 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/payouts': {
+      id: '/_authenticated/payouts'
+      path: '/payouts'
+      fullPath: '/payouts'
+      preLoaderRoute: typeof AuthenticatedPayoutsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/live': {
+      id: '/_authenticated/live'
+      path: '/live'
+      fullPath: '/live'
+      preLoaderRoute: typeof AuthenticatedLiveRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard': {
+      id: '/_authenticated/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AuthenticatedDashboardRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/approvals': {
+      id: '/_authenticated/approvals'
+      path: '/approvals'
+      fullPath: '/approvals'
+      preLoaderRoute: typeof AuthenticatedApprovalsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/api/public/ghost-webhook': {
+      id: '/api/public/ghost-webhook'
+      path: '/api/public/ghost-webhook'
+      fullPath: '/api/public/ghost-webhook'
+      preLoaderRoute: typeof ApiPublicGhostWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/streams/new': {
+      id: '/_authenticated/streams/new'
+      path: '/streams/new'
+      fullPath: '/streams/new'
+      preLoaderRoute: typeof AuthenticatedStreamsNewRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/streams/$streamId': {
+      id: '/_authenticated/streams/$streamId'
+      path: '/streams/$streamId'
+      fullPath: '/streams/$streamId'
+      preLoaderRoute: typeof AuthenticatedStreamsStreamIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
+interface AuthenticatedRouteRouteChildren {
+  AuthenticatedApprovalsRoute: typeof AuthenticatedApprovalsRoute
+  AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedLiveRoute: typeof AuthenticatedLiveRoute
+  AuthenticatedPayoutsRoute: typeof AuthenticatedPayoutsRoute
+  AuthenticatedStreamsStreamIdRoute: typeof AuthenticatedStreamsStreamIdRoute
+  AuthenticatedStreamsNewRoute: typeof AuthenticatedStreamsNewRoute
+}
+
+const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedApprovalsRoute: AuthenticatedApprovalsRoute,
+  AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedLiveRoute: AuthenticatedLiveRoute,
+  AuthenticatedPayoutsRoute: AuthenticatedPayoutsRoute,
+  AuthenticatedStreamsStreamIdRoute: AuthenticatedStreamsStreamIdRoute,
+  AuthenticatedStreamsNewRoute: AuthenticatedStreamsNewRoute,
+}
+
+const AuthenticatedRouteRouteWithChildren =
+  AuthenticatedRouteRoute._addFileChildren(AuthenticatedRouteRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
+  AuthRoute: AuthRoute,
+  ApiPublicGhostWebhookRoute: ApiPublicGhostWebhookRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
