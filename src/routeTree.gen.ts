@@ -12,7 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedPayoutsRouteImport } from './routes/_authenticated/payouts'
+import { Route as AuthenticatedLiveRouteImport } from './routes/_authenticated/live'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedApprovalsRouteImport } from './routes/_authenticated/approvals'
 import { Route as ApiPublicGhostWebhookRouteImport } from './routes/api/public/ghost-webhook'
 import { Route as AuthenticatedStreamsNewRouteImport } from './routes/_authenticated/streams.new'
 import { Route as AuthenticatedStreamsStreamIdRouteImport } from './routes/_authenticated/streams.$streamId'
@@ -31,9 +34,24 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedPayoutsRoute = AuthenticatedPayoutsRouteImport.update({
+  id: '/payouts',
+  path: '/payouts',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedLiveRoute = AuthenticatedLiveRouteImport.update({
+  id: '/live',
+  path: '/live',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedApprovalsRoute = AuthenticatedApprovalsRouteImport.update({
+  id: '/approvals',
+  path: '/approvals',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const ApiPublicGhostWebhookRoute = ApiPublicGhostWebhookRouteImport.update({
@@ -56,7 +74,10 @@ const AuthenticatedStreamsStreamIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/approvals': typeof AuthenticatedApprovalsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/live': typeof AuthenticatedLiveRoute
+  '/payouts': typeof AuthenticatedPayoutsRoute
   '/streams/$streamId': typeof AuthenticatedStreamsStreamIdRoute
   '/streams/new': typeof AuthenticatedStreamsNewRoute
   '/api/public/ghost-webhook': typeof ApiPublicGhostWebhookRoute
@@ -64,7 +85,10 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/approvals': typeof AuthenticatedApprovalsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/live': typeof AuthenticatedLiveRoute
+  '/payouts': typeof AuthenticatedPayoutsRoute
   '/streams/$streamId': typeof AuthenticatedStreamsStreamIdRoute
   '/streams/new': typeof AuthenticatedStreamsNewRoute
   '/api/public/ghost-webhook': typeof ApiPublicGhostWebhookRoute
@@ -74,7 +98,10 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/_authenticated/approvals': typeof AuthenticatedApprovalsRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/live': typeof AuthenticatedLiveRoute
+  '/_authenticated/payouts': typeof AuthenticatedPayoutsRoute
   '/_authenticated/streams/$streamId': typeof AuthenticatedStreamsStreamIdRoute
   '/_authenticated/streams/new': typeof AuthenticatedStreamsNewRoute
   '/api/public/ghost-webhook': typeof ApiPublicGhostWebhookRoute
@@ -84,7 +111,10 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/approvals'
     | '/dashboard'
+    | '/live'
+    | '/payouts'
     | '/streams/$streamId'
     | '/streams/new'
     | '/api/public/ghost-webhook'
@@ -92,7 +122,10 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/auth'
+    | '/approvals'
     | '/dashboard'
+    | '/live'
+    | '/payouts'
     | '/streams/$streamId'
     | '/streams/new'
     | '/api/public/ghost-webhook'
@@ -101,7 +134,10 @@ export interface FileRouteTypes {
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/_authenticated/approvals'
     | '/_authenticated/dashboard'
+    | '/_authenticated/live'
+    | '/_authenticated/payouts'
     | '/_authenticated/streams/$streamId'
     | '/_authenticated/streams/new'
     | '/api/public/ghost-webhook'
@@ -137,11 +173,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/payouts': {
+      id: '/_authenticated/payouts'
+      path: '/payouts'
+      fullPath: '/payouts'
+      preLoaderRoute: typeof AuthenticatedPayoutsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/live': {
+      id: '/_authenticated/live'
+      path: '/live'
+      fullPath: '/live'
+      preLoaderRoute: typeof AuthenticatedLiveRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/approvals': {
+      id: '/_authenticated/approvals'
+      path: '/approvals'
+      fullPath: '/approvals'
+      preLoaderRoute: typeof AuthenticatedApprovalsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/api/public/ghost-webhook': {
@@ -169,13 +226,19 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedApprovalsRoute: typeof AuthenticatedApprovalsRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedLiveRoute: typeof AuthenticatedLiveRoute
+  AuthenticatedPayoutsRoute: typeof AuthenticatedPayoutsRoute
   AuthenticatedStreamsStreamIdRoute: typeof AuthenticatedStreamsStreamIdRoute
   AuthenticatedStreamsNewRoute: typeof AuthenticatedStreamsNewRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedApprovalsRoute: AuthenticatedApprovalsRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedLiveRoute: AuthenticatedLiveRoute,
+  AuthenticatedPayoutsRoute: AuthenticatedPayoutsRoute,
   AuthenticatedStreamsStreamIdRoute: AuthenticatedStreamsStreamIdRoute,
   AuthenticatedStreamsNewRoute: AuthenticatedStreamsNewRoute,
 }
