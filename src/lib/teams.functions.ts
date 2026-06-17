@@ -17,7 +17,6 @@ export const createTeam = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ name: z.string().min(1).max(80) }).parse(input))
   .handler(async ({ data, context }) => {
-    console.log("[createTeam] claims:", JSON.stringify({ sub: context.userId, role: (context.claims as { role?: string })?.role, aud: (context.claims as { aud?: string })?.aud }));
     const { data: team, error } = await context.supabase
       .from("teams")
       .insert({ name: data.name, owner_id: context.userId })
