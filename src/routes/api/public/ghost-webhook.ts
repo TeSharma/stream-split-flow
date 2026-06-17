@@ -79,22 +79,35 @@ export const Route = createFileRoute("/api/public/ghost-webhook")({
           payload?.subscription?.plan?.amount ??
           500;
 
-        const { error } = await supabaseAdmin.from("payment_events").upsert(
-          {
-            stream_id: streamId,
-            ghost_event_id: eventId,
-            ghost_subscription_id: member?.subscriptions?.[0]?.id ?? null,
-            subscriber_email: email,
-            amount_cents: amountCents,
-            currency: member?.subscriptions?.[0]?.plan?.currency ?? "usd",
-            status: "received",
-            idempotency_key: eventId,
-          },
-          { onConflict: "idempotency_key", ignoreDuplicates: true },
-        );
+        const { data: inserted, error } = await supabaseAdmin
+          .from("payment_events")
+          .upsert(
+            {
+              stream_id: streamId,
+              ghost_event_id: eventId,
+              ghost_subscription_id: member?.subscriptions?.[0]?.id ?? null,
+              subscriber_email: email,
+              amount_cents: amountCents,
+              currency: member?.subscriptions?.[0]?.plan?.currency ?? "usd",
+              status: "received",
+              idempotency_key: eventId,
+            },
+            { onConflict: "idempotency_key", ignoreDuplicates: true },
+          )
+          .select("id")
+          .maybeSingle();
         if (error) {
           console.error("[ghost-webhook] insert failed", error);
           return new Response("DB error", { status: 500 });
+        }
+
+        if (inserted?.id) {
+          try {
+            const { buildProposalForPayment } = await import("@/lib/splits.functions");
+            await buildProposalForPayment(inserted.id);
+          } catch (e) {
+            console.error("[ghost-webhook] proposal failed", e);
+          }
         }
 
         return Response.json({ ok: true });
