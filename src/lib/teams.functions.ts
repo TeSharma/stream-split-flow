@@ -17,6 +17,8 @@ export const createTeam = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ name: z.string().min(1).max(80) }).parse(input))
   .handler(async ({ data, context }) => {
+    const { data: rpcUid } = await context.supabase.rpc("debug_uid" as never);
+    console.log("[createTeam] userId from JWT:", context.userId, "auth.uid() from DB:", rpcUid);
     const { data: team, error } = await context.supabase
       .from("teams")
       .insert({ name: data.name, owner_id: context.userId })
