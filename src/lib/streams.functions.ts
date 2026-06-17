@@ -83,5 +83,13 @@ export const triggerDemoPayment = createServerFn({ method: "POST" })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
+
+    // Kick off AI split proposal immediately (fire-and-wait — UI expects it ready)
+    try {
+      const { buildProposalForPayment } = await import("./splits.functions");
+      await buildProposalForPayment(payment.id);
+    } catch (e) {
+      console.error("[demo] proposal generation failed", e);
+    }
     return payment;
   });
