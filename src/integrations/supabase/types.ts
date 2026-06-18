@@ -156,9 +156,11 @@ export type Database = {
       payouts: {
         Row: {
           amount_usdc: number
+          circle_tx_id: string | null
           confirmed_at: string | null
           contributor_id: string
           created_at: string
+          destination_address: string | null
           error: string | null
           id: string
           payment_event_id: string
@@ -168,9 +170,11 @@ export type Database = {
         }
         Insert: {
           amount_usdc: number
+          circle_tx_id?: string | null
           confirmed_at?: string | null
           contributor_id: string
           created_at?: string
+          destination_address?: string | null
           error?: string | null
           id?: string
           payment_event_id: string
@@ -180,9 +184,11 @@ export type Database = {
         }
         Update: {
           amount_usdc?: number
+          circle_tx_id?: string | null
           confirmed_at?: string | null
           contributor_id?: string
           created_at?: string
+          destination_address?: string | null
           error?: string | null
           id?: string
           payment_event_id?: string
