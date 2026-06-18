@@ -33,7 +33,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function explorer(txHash: string | null | undefined) {
   if (!txHash) return null;
-  return `https://sepolia.etherscan.io/tx/${txHash}`;
+  return `https://explorer-testnet.arc.network/tx/${txHash}`;
 }
 
 function Payouts() {
