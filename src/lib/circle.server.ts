@@ -47,9 +47,10 @@ async function getCirclePublicKey(): Promise<CryptoKey> {
     .replace(/-----BEGIN PUBLIC KEY-----/g, "")
     .replace(/-----END PUBLIC KEY-----/g, "")
     .replace(/\s+/g, "");
+  const der = b64decode(pem);
   cachedPublicKey = await crypto.subtle.importKey(
     "spki",
-    b64decode(pem),
+    der.buffer.slice(der.byteOffset, der.byteOffset + der.byteLength) as ArrayBuffer,
     { name: "RSA-OAEP", hash: "SHA-256" },
     false,
     ["encrypt"],
@@ -62,7 +63,11 @@ async function encryptEntitySecret(): Promise<string> {
   const key = await getCirclePublicKey();
   const secretBytes = hexToBytes(env("CIRCLE_ENTITY_SECRET"));
   if (secretBytes.length !== 32) throw new Error("CIRCLE_ENTITY_SECRET must be 32 bytes hex");
-  const cipher = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, key, secretBytes);
+  const buf = secretBytes.buffer.slice(
+    secretBytes.byteOffset,
+    secretBytes.byteOffset + secretBytes.byteLength,
+  ) as ArrayBuffer;
+  const cipher = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, key, buf);
   return b64encode(new Uint8Array(cipher));
 }
 
