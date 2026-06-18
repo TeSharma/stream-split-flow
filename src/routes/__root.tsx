@@ -84,7 +84,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           "SplitAI turns Ghost newsletter subscriptions into real-time revenue streams. AI proposes splits, your team approves, USDC pays out on Arc.",
       },
       { name: "author", content: "SplitAI" },
-      { property: "og:title", content: "SplitAI — real-time revenue streams" },
+      { property: "og:title", content: "SplitAI — real-time revenue streams for creator teams" },
       {
         property: "og:description",
         content:
@@ -92,6 +92,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: "SplitAI — real-time revenue streams for creator teams" },
+      { name: "description", content: "StreamSplit AI automates creator revenue sharing by ingesting Ghost payments, using AI for contribution analysis, and distributing USDC on Arc." },
+      { property: "og:description", content: "StreamSplit AI automates creator revenue sharing by ingesting Ghost payments, using AI for contribution analysis, and distributing USDC on Arc." },
+      { name: "twitter:description", content: "StreamSplit AI automates creator revenue sharing by ingesting Ghost payments, using AI for contribution analysis, and distributing USDC on Arc." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/2060f98d-ddde-4bdc-9468-a38ce63e5713/id-preview-fa4d86a7--f3377505-4e6f-4fe9-8f92-536253edeab8.lovable.app-1781655621668.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/2060f98d-ddde-4bdc-9468-a38ce63e5713/id-preview-fa4d86a7--f3377505-4e6f-4fe9-8f92-536253edeab8.lovable.app-1781655621668.png" },
     ],
     links: [{ rel: "stylesheet", href: appCss }],
   }),
