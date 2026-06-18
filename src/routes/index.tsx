@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight, Zap, BrainCircuit, ShieldCheck, Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import logoAsset from "@/assets/SplitAi-transparent.png.asset.json";
 
 export const Route = createFileRoute("/")({
   head: () => ({
