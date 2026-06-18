@@ -310,7 +310,20 @@ export const approveSplitProposal = createServerFn({ method: "POST" })
       .eq("id", data.proposalId);
     if (updErr) throw new Error(updErr.message);
 
-    return { ok: true, payouts: usdcRows.length };
+    // Phase 3: kick off Circle USDC transfers for queued payouts.
+    let execution: { submitted: number; skipped: number; failed: number } = {
+      submitted: 0,
+      skipped: 0,
+      failed: 0,
+    };
+    try {
+      const { executePayoutsForPayment } = await import("./payouts.functions");
+      execution = await executePayoutsForPayment(payment.id);
+    } catch (e) {
+      console.warn("[splits.approve] payout execution failed:", (e as Error).message);
+    }
+
+    return { ok: true, payouts: usdcRows.length, execution };
   });
 
 /** Server fn — generate a proposal explicitly (used after demo trigger or backfill). */
