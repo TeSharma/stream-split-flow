@@ -76,7 +76,7 @@ function Payouts() {
           </div>
           <h1 className="text-3xl font-semibold">Payouts</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Live settlement via Circle Developer Wallets on Ethereum Sepolia. Updates stream in as they confirm on-chain.
+            Live settlement via Circle Developer Wallets on Arc Testnet. Updates stream in as they confirm on-chain.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
