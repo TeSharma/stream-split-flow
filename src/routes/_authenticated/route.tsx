@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import logoAsset from "@/assets/SplitAi-transparent.png.asset.json";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
@@ -33,7 +34,7 @@ function AuthedLayout() {
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
           <div className="flex items-center gap-6">
             <Link to="/dashboard" className="flex items-center gap-2">
-              <div className="h-6 w-6 rounded-md bg-primary pulse-mint" />
+              <img src={logoAsset.url} alt="SplitAI logo" className="h-6 w-6 object-contain" />
               <span className="font-mono text-xs tracking-wider">SPLIT.AI</span>
             </Link>
             <nav className="hidden gap-1 md:flex">
