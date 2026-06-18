@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import logoAsset from "@/assets/SplitAi-transparent.png.asset.json";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
