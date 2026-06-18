@@ -31,7 +31,7 @@ function Landing() {
 
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-md bg-primary pulse-mint" />
+          <img src={logoAsset.url} alt="SplitAI logo" className="h-8 w-8 object-contain" />
           <span className="font-mono text-sm tracking-wider">SPLIT.AI</span>
         </div>
         <nav className="flex items-center gap-3">
