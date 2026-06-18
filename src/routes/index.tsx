@@ -47,10 +47,7 @@ function Landing() {
 
       <main className="relative z-10 mx-auto max-w-6xl px-6 pb-24 pt-12 lg:pt-24">
         <div className="max-w-3xl">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-1 text-xs text-muted-foreground backdrop-blur">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary pulse-mint" />
-            Lepton Agents Hackathon · live demo
-          </div>
+          
           <h1 className="text-5xl font-bold leading-[1.05] tracking-tight lg:text-7xl">
             Every subscription becomes a{" "}
             <span className="text-primary">real-time revenue stream.</span>
