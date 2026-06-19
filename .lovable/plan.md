@@ -1,43 +1,74 @@
+## Ghost integration plan
 
-## Goal
+You picked all four scopes + real Ghost site as the test source. Here's the build, sequenced so each step is testable on its own.
 
-1. Move Phase 3 payouts from `ETH-SEPOLIA` to **Arc Testnet** (Circle chain code `ARC-TESTNET`), which Circle Developer-Controlled Wallets does support (EOA + SCA).
-2. Remove the "Lepton Agents Hackathon · live demo" badge from the homepage.
+### 1. Schema — store Ghost API credentials per stream
 
-## Changes
+A new migration adds two columns to `streams`:
 
-### 1. Provision an Arc Testnet wallet on the existing entity
+- `ghost_content_api_key text` — Ghost Content API key (used to pull posts + authors)
+- `ghost_last_sync_at timestamptz` — surfaced in UI
 
-I'll create a new wallet (same wallet set, same registered entity secret — no re-registration needed) on `ARC-TESTNET` via Circle's API. The returned wallet ID + address replace the current ETH-SEPOLIA values. Old `ETH-SEPOLIA` wallet stays orphaned but harmless.
+No new tables. `contributors.ghost_author_id` and `content_items.ghost_post_id` already exist, so the upserts have a stable key.
 
-### 2. Update runtime secrets
+The Content API key is low-risk (read-only, scoped to a single site) but still per-stream, so we keep it in the row rather than in shared secrets.
 
-Update via `secrets--update_secret`:
-- `CIRCLE_BLOCKCHAIN` → `ARC-TESTNET`
-- `CIRCLE_WALLET_ID` → new Arc wallet UUID
-- `CIRCLE_USDC_TOKEN_ADDRESS` → Arc Testnet USDC contract address (resolved from Circle's token list for ARC-TESTNET; the client also falls back to symbol="USDC" so this is belt-and-suspenders)
+### 2. Server functions (`src/lib/ghost.functions.ts`)
 
-`CIRCLE_API_KEY` and `CIRCLE_ENTITY_SECRET` stay the same.
+- `updateGhostConnection({ streamId, ghostSiteUrl, ghostContentApiKey })` — saves URL + key on the stream. Auth-gated.
+- `syncGhostContent({ streamId })` — calls `GET {site}/ghost/api/content/posts/?key=...&include=authors&limit=50&fields=id,title,slug,custom_excerpt,excerpt,published_at`. Then:
+  - For each unique post author: upsert into `contributors` keyed by `ghost_author_id` (team-scoped). New authors land with `role='writer'` and no wallet — surfaced in UI so user can add a wallet.
+  - For each post: upsert into `content_items` keyed by `ghost_post_id` with `type='article'`, `title`, `body_excerpt` from `custom_excerpt || excerpt`, `contributor_id` resolved from primary author.
+  - Set `ghost_last_sync_at = now()`. Returns `{ postsSynced, contributorsAdded }`.
 
-### 3. Code touch-ups
+Both use `requireSupabaseAuth` and admin client inside the handler (because `contributors` is team-scoped and we need to upsert by `ghost_author_id`).
 
-- `src/lib/circle.server.ts`: no logic change required — it already resolves `tokenId` dynamically from `/wallets/{id}/balances` and matches on `CIRCLE_USDC_TOKEN_ADDRESS` or symbol `USDC`. Just verify and leave.
-- `src/routes/_authenticated/payouts.tsx`: swap the Etherscan tx link to the **Arc Sepolia explorer** (`https://sepolia.arcscan.net/tx/<hash>` — Circle's published Arc Testnet explorer; will confirm the exact URL when wiring it).
-- `src/routes/index.tsx`: delete the `<div>` containing "Lepton Agents Hackathon · live demo" (lines ~52–55), keep everything else.
+### 3. Webhook hardening (`src/routes/api/public/ghost-webhook.ts`)
 
-### 4. Funding note (user action)
+Ghost actually sends distinct events. We tighten the existing handler to:
 
-After the new wallet exists, you fund the new Arc Testnet wallet address with test USDC from Circle's faucet (https://faucet.circle.com → select Arc Testnet → USDC). Old ETH-Sepolia funds stay where they are.
+- Read event type from `request.headers.get('x-ghost-event')` (Ghost sets this) and the payload shape.
+- Process only paid subscription activations:
+  - `member.added` only when `member.current.subscriptions[0].status === 'active'` AND `plan.amount > 0`
+  - `subscription.activated`
+  - Ignore free signups, member updates without a new active paid sub, deletions, and anything else (return 200 OK so Ghost doesn't retry).
+- Parse `plan.amount` (already minor units) and `plan.currency` directly; drop the $5 default.
+- Keep idempotency on Ghost's real event id (fall back to `${subscriptionId}-${status}` if no top-level id), so a retry from Ghost doesn't double-pay.
+- Add structured logs (`event`, `streamId`, `amountCents`, `subscriberEmail`) for debugging real traffic.
 
-## Out of scope
+### 4. Stream detail UI (`streams.$streamId.tsx`)
 
-- No DB migration. The `payouts` table is chain-agnostic; `tx_hash` and `circle_tx_id` already cover Arc.
-- No change to the entity secret, recovery file, or AI/splits logic.
+Add a new "Connect Ghost" card above the existing webhook card:
 
-## Order of operations once you approve
+- Inputs: Ghost site URL (e.g. `https://yourletter.ghost.io`) + Content API key. "Save" calls `updateGhostConnection`.
+- Once saved, show "Sync content now" button + "Last synced: 3m ago". Button calls `syncGhostContent` and toasts `Synced 12 posts, added 2 contributors`.
 
-1. Call Circle `POST /v1/w3s/developer/wallets` with `blockchains: ["ARC-TESTNET"]` and the existing `walletSetId`, signed with a fresh `entitySecretCiphertext`.
-2. Read the resulting wallet ID + address back to you.
-3. Update the 3 secrets above.
-4. Edit `payouts.tsx` explorer link and `index.tsx` badge removal.
-5. You fund the wallet, then approve a proposal to verify end-to-end on Arc.
+The existing Ghost webhook card is updated with clearer step-by-step instructions:
+
+> 1. In Ghost Admin → **Settings → Integrations → + Custom integration**, name it "SplitAI".
+> 2. Click **+ Add webhook**. Event: `Member subscription created`. URL: (copy). Secret: (copy).
+> 3. Add a second webhook for `Member added` if you also want trial conversions.
+
+Plus a one-liner under contributors: "Auto-imported from Ghost authors when you sync."
+
+### 5. Out of scope (call out)
+
+- Ghost Admin API (would let us read drafts + author emails directly) — Content API is enough for the AI signal and avoids asking for an admin key.
+- Wallet address backfill for Ghost-imported contributors — user fills those in manually.
+- Auto-sync on a schedule — sync stays manual for now; we can add pg_cron later.
+
+### Technical notes
+
+- New file `src/lib/ghost.functions.ts` lives in `src/lib/` (client-safe path); admin client loaded inside `.handler()` via `await import('@/integrations/supabase/client.server')`.
+- Ghost Content API is a public HTTPS call from the Worker — fetch only, no SDK. Validate the URL with `new URL()` and force `https:` before calling.
+- Migration adds GRANTs only as needed (no new tables → no new grants); only `ALTER TABLE streams ADD COLUMN`.
+
+### Order of operations
+
+1. Migration: 2 new columns on `streams`.
+2. `src/lib/ghost.functions.ts` with both server fns.
+3. Harden `ghost-webhook.ts`.
+4. UI updates in `streams.$streamId.tsx`.
+5. You paste your Ghost site URL + Content API key, click Sync, then add the webhook in Ghost Admin and we test a real subscription end-to-end.
+
+Shall I proceed?

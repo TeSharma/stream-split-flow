@@ -1,15 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { getStream, triggerDemoPayment } from "@/lib/streams.functions";
 import { addContributor, getTeamOverview } from "@/lib/teams.functions";
+import { updateGhostConnection, syncGhostContent } from "@/lib/ghost.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Copy, Zap, ArrowLeft } from "lucide-react";
+import { Copy, Zap, ArrowLeft, RefreshCw, Plug } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/streams/$streamId")({
   head: ({ params }) => ({ meta: [{ title: `Stream ${params.streamId.slice(0, 8)} · SplitAI` }] }),
@@ -52,16 +53,36 @@ function StreamDetail() {
         <p className="text-sm text-muted-foreground">{s.ghost_site_url || "—"}</p>
       </div>
 
+      <ConnectGhostCard
+        streamId={s.id}
+        initialUrl={s.ghost_site_url ?? ""}
+        hasKey={!!s.ghost_content_api_key}
+        lastSyncAt={s.ghost_last_sync_at}
+      />
+
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Ghost webhook</CardTitle>
             <CardDescription>
-              In Ghost Admin → Settings → Integrations → Add custom integration. Create a webhook
-              for <span className="font-mono">member.added</span> and paste:
+              Sends a payment event into SplitAI every time a member subscribes on Ghost.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <ol className="space-y-1.5 text-xs text-muted-foreground list-decimal pl-4">
+              <li>
+                In Ghost Admin → <b>Settings → Integrations</b> → <b>+ Add custom integration</b>,
+                name it "SplitAI".
+              </li>
+              <li>
+                Click <b>+ Add webhook</b>. Event: <code className="font-mono">Member subscription created</code>.
+                Paste the URL and secret below.
+              </li>
+              <li>
+                (Optional) Add a second webhook for <code className="font-mono">Member added</code> if you also
+                want trial-to-paid conversions.
+              </li>
+            </ol>
             <Field label="Webhook URL" value={webhookUrl} />
             <Field label="Secret" value={s.webhook_secret} mono />
             <DemoButton streamId={s.id} />
@@ -71,11 +92,13 @@ function StreamDetail() {
         <Card>
           <CardHeader>
             <CardTitle>Contributors</CardTitle>
-            <CardDescription>The team behind the content on this stream.</CardDescription>
+            <CardDescription>
+              The team behind the content. Ghost authors are imported automatically when you sync.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {contributors.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No contributors yet — add one below.</p>
+              <p className="text-sm text-muted-foreground">No contributors yet — sync Ghost or add one below.</p>
             ) : (
               <ul className="divide-y divide-border">
                 {contributors.map((c) => (
@@ -96,6 +119,124 @@ function StreamDetail() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function ConnectGhostCard({
+  streamId,
+  initialUrl,
+  hasKey,
+  lastSyncAt,
+}: {
+  streamId: string;
+  initialUrl: string;
+  hasKey: boolean;
+  lastSyncAt: string | null;
+}) {
+  const qc = useQueryClient();
+  const saveFn = useServerFn(updateGhostConnection);
+  const syncFn = useServerFn(syncGhostContent);
+  const [url, setUrl] = useState(initialUrl);
+  const [key, setKey] = useState("");
+
+  useEffect(() => setUrl(initialUrl), [initialUrl]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      saveFn({ data: { streamId, ghostSiteUrl: url, ghostContentApiKey: key } }),
+    onSuccess: () => {
+      toast.success("Ghost connection saved");
+      setKey("");
+      qc.invalidateQueries({ queryKey: ["stream", streamId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const sync = useMutation({
+    mutationFn: () => syncFn({ data: { streamId } }),
+    onSuccess: (r) => {
+      toast.success(
+        `Synced ${r.postsSynced} post${r.postsSynced === 1 ? "" : "s"}` +
+          (r.contributorsAdded
+            ? `, added ${r.contributorsAdded} contributor${r.contributorsAdded === 1 ? "" : "s"}`
+            : ""),
+      );
+      qc.invalidateQueries({ queryKey: ["stream", streamId] });
+      qc.invalidateQueries({ queryKey: ["team-overview"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="mb-2 flex items-center gap-2 text-primary">
+          <Plug className="h-4 w-4" />
+          <span className="text-xs uppercase tracking-wider">Connect Ghost</span>
+        </div>
+        <CardTitle>Sync posts & authors</CardTitle>
+        <CardDescription>
+          Paste your Ghost site URL and a Content API key. SplitAI imports authors as contributors
+          and posts as content signal for the AI split agent. Find your key in Ghost Admin →{" "}
+          <b>Settings → Integrations → SplitAI → Content API Key</b>.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (url && key) save.mutate();
+          }}
+          className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="ghost-url" className="text-xs uppercase tracking-wider text-muted-foreground">
+              Ghost site URL
+            </Label>
+            <Input
+              id="ghost-url"
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://yourletter.ghost.io"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ghost-key" className="text-xs uppercase tracking-wider text-muted-foreground">
+              Content API key {hasKey && <span className="text-primary">· saved</span>}
+            </Label>
+            <Input
+              id="ghost-key"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={hasKey ? "Replace key (leave blank to keep)" : "22-char hex key"}
+              className="font-mono text-xs"
+              required={!hasKey}
+            />
+          </div>
+          <Button type="submit" disabled={save.isPending || !url || !key}>
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+        </form>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+          <p className="text-xs text-muted-foreground">
+            {lastSyncAt
+              ? `Last synced ${new Date(lastSyncAt).toLocaleString()}`
+              : "Not synced yet"}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!hasKey || sync.isPending}
+            onClick={() => sync.mutate()}
+          >
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${sync.isPending ? "animate-spin" : ""}`} />
+            {sync.isPending ? "Syncing…" : "Sync content now"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

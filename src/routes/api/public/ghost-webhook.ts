@@ -29,6 +29,60 @@ function safeEqualHex(a: string, b: string) {
   }
 }
 
+type GhostSubscription = {
+  id?: string;
+  status?: string;
+  plan?: { amount?: number; currency?: string; interval?: string };
+};
+
+type GhostMember = {
+  id?: string;
+  email?: string | null;
+  status?: string;
+  subscriptions?: GhostSubscription[];
+};
+
+/**
+ * Extract the active paid subscription from a Ghost webhook payload.
+ * Returns null if this event is not a paid activation we should process.
+ */
+function extractPaidActivation(payload: any, eventHeader: string | null) {
+  // Ghost may send: { member: { current, previous } } for member.*,
+  // or { subscription: { current, previous } } for subscription.*.
+  const member: GhostMember | undefined =
+    payload?.member?.current ?? payload?.member;
+  const previousMember: GhostMember | undefined = payload?.member?.previous;
+  const subscription: GhostSubscription | undefined =
+    payload?.subscription?.current ??
+    payload?.subscription ??
+    member?.subscriptions?.[0];
+  const previousSubscription: GhostSubscription | undefined =
+    payload?.subscription?.previous;
+
+  if (!subscription || !subscription.plan) return null;
+  const amount = subscription.plan.amount ?? 0;
+  if (!amount || amount <= 0) return null;
+  if (subscription.status !== "active") return null;
+
+  // Idempotency: skip if subscription was already active in the previous state
+  // (e.g. unrelated member.* update on an already-subscribed member).
+  if (previousSubscription?.status === "active") return null;
+  if (
+    !payload?.subscription &&
+    previousMember?.subscriptions?.some((s) => s.status === "active")
+  ) {
+    return null;
+  }
+
+  return {
+    member,
+    subscription,
+    amountCents: amount,
+    currency: (subscription.plan.currency ?? "usd").toLowerCase(),
+    eventLabel: eventHeader ?? "unknown",
+  };
+}
+
 export const Route = createFileRoute("/api/public/ghost-webhook")({
   server: {
     handlers: {
@@ -39,6 +93,7 @@ export const Route = createFileRoute("/api/public/ghost-webhook")({
 
         const body = await request.text();
         const sig = parseGhostSignature(request.headers.get("x-ghost-signature"));
+        const eventHeader = request.headers.get("x-ghost-event");
 
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
         const { data: stream, error: sErr } = await supabaseAdmin
@@ -63,21 +118,31 @@ export const Route = createFileRoute("/api/public/ghost-webhook")({
           return new Response("Invalid JSON", { status: 400 });
         }
 
-        // Ghost sends events like { member: { current, previous } } for member.added.
-        // We treat any new paid subscription as a payment event. For real-money events,
-        // hook subscription.activated / member.updated with paid status.
-        const member = payload?.member?.current ?? payload?.member ?? payload?.subscription ?? {};
+        const activation = extractPaidActivation(payload, eventHeader);
+        if (!activation) {
+          console.log("[ghost-webhook] skipped non-paid event", {
+            streamId,
+            event: eventHeader,
+          });
+          // Return 200 so Ghost doesn't retry; we just don't process it.
+          return Response.json({ ok: true, skipped: true });
+        }
+
+        const { member, subscription, amountCents, currency, eventLabel } = activation;
         const eventId =
           payload?.id ??
           payload?.event_id ??
-          `${streamId}-${member?.id ?? "unknown"}-${Date.now()}`;
-        const email = member?.email ?? null;
-        // Default $5/mo if Ghost didn't include price. Real Ghost subscriptions carry
-        // member.subscriptions[0].plan.amount in minor units.
-        const amountCents =
-          member?.subscriptions?.[0]?.plan?.amount ??
-          payload?.subscription?.plan?.amount ??
-          500;
+          (subscription.id ? `${subscription.id}-${subscription.status}` : null) ??
+          `${streamId}-${member?.id ?? "unknown"}-${amountCents}-${sig.t}`;
+
+        console.log("[ghost-webhook] paid activation", {
+          streamId,
+          event: eventLabel,
+          eventId,
+          amountCents,
+          currency,
+          subscriberEmail: member?.email,
+        });
 
         const { data: inserted, error } = await supabaseAdmin
           .from("payment_events")
@@ -85,10 +150,10 @@ export const Route = createFileRoute("/api/public/ghost-webhook")({
             {
               stream_id: streamId,
               ghost_event_id: eventId,
-              ghost_subscription_id: member?.subscriptions?.[0]?.id ?? null,
-              subscriber_email: email,
+              ghost_subscription_id: subscription.id ?? null,
+              subscriber_email: member?.email ?? null,
               amount_cents: amountCents,
-              currency: member?.subscriptions?.[0]?.plan?.currency ?? "usd",
+              currency,
               status: "received",
               idempotency_key: eventId,
             },
