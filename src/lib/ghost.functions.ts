@@ -108,10 +108,9 @@ export const syncGhostContent = createServerFn({ method: "POST" })
     const payload = (await res.json()) as { posts?: GhostPost[] };
     const posts = payload.posts ?? [];
 
-    // Load admin client INSIDE handler (not at module scope) — required by
-    // import-graph rules. Needed because we upsert across all contributors
-    // for the team using ghost_author_id, which has no unique constraint.
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // `supabaseAdmin` already loaded above for the API-key lookup; reuse it
+    // for the upserts (no unique constraint on ghost_author_id requires a
+    // manual lookup-then-insert).
 
     // Collect unique authors across all posts
     const authorMap = new Map<string, GhostAuthor>();
