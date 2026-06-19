@@ -127,6 +127,14 @@ function Payouts() {
                       <div className="font-mono text-sm">{p.amount_usdc.toFixed(4)} USDC</div>
                       <div className="mt-1 flex items-center justify-end gap-2">
                         <StatusBadge status={p.status} />
+                        {p.batched ? (
+                          <span
+                            className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                            title={`Batched on-chain with ${p.batch_size} other payouts via Arc Multicall3From`}
+                          >
+                            batch ×{p.batch_size}
+                          </span>
+                        ) : null}
                         {url ? (
                           <a
                             href={url}
