@@ -84,7 +84,11 @@ function StreamDetail() {
               </li>
             </ol>
             <Field label="Webhook URL" value={webhookUrl} />
-            <Field label="Secret" value={s.webhook_secret} mono />
+            <Field
+              label="Secret"
+              value={s.webhook_secret ?? "— owner-only —"}
+              mono
+            />
             <DemoButton streamId={s.id} />
           </CardContent>
         </Card>

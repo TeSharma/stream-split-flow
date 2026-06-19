@@ -14,7 +14,8 @@ export const createStream = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { data: stream, error } = await context.supabase
+    // Insert via user client (RLS enforces team-owner permission).
+    const { data: inserted, error } = await context.supabase
       .from("streams")
       .insert({
         team_id: data.teamId,
@@ -22,25 +23,52 @@ export const createStream = createServerFn({ method: "POST" })
         ghost_site_url: data.ghostSiteUrl || null,
         source: "ghost",
       })
-      .select("id, name, webhook_secret")
+      .select("id, name")
       .single();
     if (error) throw new Error(error.message);
-    return stream;
+
+    // webhook_secret is column-restricted from `authenticated`. The caller
+    // just created the stream (so they're an owner per RLS) — fetch the
+    // secret via the admin client so they can configure the Ghost webhook.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: secretRow } = await supabaseAdmin
+      .from("streams")
+      .select("webhook_secret")
+      .eq("id", inserted.id)
+      .single();
+    return { ...inserted, webhook_secret: secretRow?.webhook_secret ?? null };
   });
 
 export const getStream = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ streamId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    // Base row via user client — RLS confirms team membership.
     const { data: stream, error } = await context.supabase
       .from("streams")
-      .select(
-        "id, team_id, name, source, ghost_site_url, webhook_secret, status, created_at, ghost_content_api_key, ghost_last_sync_at",
-      )
+      .select("id, team_id, name, source, ghost_site_url, status, created_at, ghost_last_sync_at")
       .eq("id", data.streamId)
       .single();
     if (error) throw new Error(error.message);
-    return stream;
+
+    // Sensitive columns (webhook_secret, ghost_content_api_key) are only
+    // readable by team owners, via the admin client.
+    const { isTeamOwner } = await import("./access.server");
+    const owner = await isTeamOwner(context.supabase, stream.team_id);
+    if (!owner) {
+      return { ...stream, webhook_secret: null, ghost_content_api_key: null };
+    }
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: secrets } = await supabaseAdmin
+      .from("streams")
+      .select("webhook_secret, ghost_content_api_key")
+      .eq("id", stream.id)
+      .single();
+    return {
+      ...stream,
+      webhook_secret: secrets?.webhook_secret ?? null,
+      ghost_content_api_key: secrets?.ghost_content_api_key ?? null,
+    };
   });
 
 /**

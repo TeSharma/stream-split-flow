@@ -70,18 +70,32 @@ export const syncGhostContent = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { data: stream, error: streamErr } = await context.supabase
       .from("streams")
-      .select("id, team_id, ghost_site_url, ghost_content_api_key")
+      .select("id, team_id, ghost_site_url")
       .eq("id", data.streamId)
       .maybeSingle();
     if (streamErr || !stream) throw new Error("Stream not found");
-    if (!stream.ghost_site_url || !stream.ghost_content_api_key) {
+
+    // ghost_content_api_key is column-restricted to owners. Verify role,
+    // then read the key via the admin client.
+    const { isTeamOwner } = await import("./access.server");
+    if (!(await isTeamOwner(context.supabase, stream.team_id))) {
+      throw new Error("Only team owners can sync Ghost content.");
+    }
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: secretRow } = await supabaseAdmin
+      .from("streams")
+      .select("ghost_content_api_key")
+      .eq("id", stream.id)
+      .single();
+    const apiKey = secretRow?.ghost_content_api_key ?? null;
+    if (!stream.ghost_site_url || !apiKey) {
       throw new Error("Connect Ghost first — site URL and Content API key are required.");
     }
 
     const base = stream.ghost_site_url.replace(/\/+$/, "");
     const apiUrl =
       `${base}/ghost/api/content/posts/` +
-      `?key=${encodeURIComponent(stream.ghost_content_api_key)}` +
+      `?key=${encodeURIComponent(apiKey)}` +
       `&include=authors` +
       `&limit=50` +
       `&fields=id,title,custom_excerpt,excerpt,published_at`;
@@ -94,10 +108,9 @@ export const syncGhostContent = createServerFn({ method: "POST" })
     const payload = (await res.json()) as { posts?: GhostPost[] };
     const posts = payload.posts ?? [];
 
-    // Load admin client INSIDE handler (not at module scope) — required by
-    // import-graph rules. Needed because we upsert across all contributors
-    // for the team using ghost_author_id, which has no unique constraint.
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // `supabaseAdmin` already loaded above for the API-key lookup; reuse it
+    // for the upserts (no unique constraint on ghost_author_id requires a
+    // manual lookup-then-insert).
 
     // Collect unique authors across all posts
     const authorMap = new Map<string, GhostAuthor>();

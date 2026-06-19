@@ -194,13 +194,23 @@ export const getPendingProposals = createServerFn({ method: "GET" })
 
     const { data: payments } = await context.supabase
       .from("payment_events")
-      .select("id, stream_id, amount_cents, currency, subscriber_email, received_at")
+      .select("id, stream_id, amount_cents, currency, received_at")
       .in("stream_id", streamIds)
       .order("received_at", { ascending: false })
       .limit(100);
     const paymentIds = (payments ?? []).map((p) => p.id);
     if (paymentIds.length === 0) return [];
     const paymentById = new Map((payments ?? []).map((p) => [p.id, p]));
+
+    // subscriber_email column-restricted; admin read + owner-aware masking.
+    const { ownerTeamIds, maskEmail } = await import("./access.server");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const ownedTeams = await ownerTeamIds(context.supabase, teamIds);
+    const { data: emailRows } = await supabaseAdmin
+      .from("payment_events")
+      .select("id, subscriber_email")
+      .in("id", paymentIds);
+    const emailById = new Map((emailRows ?? []).map((r) => [r.id, r.subscriber_email]));
 
     const { data: proposals, error } = await context.supabase
       .from("split_proposals")
@@ -225,6 +235,8 @@ export const getPendingProposals = createServerFn({ method: "GET" })
     return (proposals ?? []).map((p) => {
       const payment = paymentById.get(p.payment_event_id);
       const stream = payment ? streamById.get(payment.stream_id) : undefined;
+      const rawEmail = payment ? emailById.get(payment.id) ?? null : null;
+      const isOwner = stream ? ownedTeams.has(stream.team_id) : false;
       return {
         id: p.id,
         ai_percentages: p.ai_percentages as Record<string, number>,
@@ -235,7 +247,7 @@ export const getPendingProposals = createServerFn({ method: "GET" })
               id: payment.id,
               amount_cents: payment.amount_cents,
               currency: payment.currency,
-              subscriber_email: payment.subscriber_email,
+              subscriber_email: isOwner ? rawEmail : maskEmail(rawEmail),
               received_at: payment.received_at,
               stream_name: stream?.name ?? "Stream",
             }

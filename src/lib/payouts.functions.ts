@@ -203,11 +203,21 @@ export const listMyPayouts = createServerFn({ method: "GET" })
 
     const { data: payments } = await context.supabase
       .from("payment_events")
-      .select("id, stream_id, amount_cents, subscriber_email, received_at")
+      .select("id, stream_id, amount_cents, received_at")
       .in("stream_id", streamIds);
     const paymentIds = (payments ?? []).map((p) => p.id);
     if (paymentIds.length === 0) return [];
     const paymentById = new Map((payments ?? []).map((p) => [p.id, p]));
+
+    // subscriber_email is column-restricted: read via admin, mask for non-owners.
+    const { ownerTeamIds, maskEmail } = await import("./access.server");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const ownedTeams = await ownerTeamIds(context.supabase, teamIds);
+    const { data: emailRows } = await supabaseAdmin
+      .from("payment_events")
+      .select("id, subscriber_email")
+      .in("id", paymentIds);
+    const emailById = new Map((emailRows ?? []).map((r) => [r.id, r.subscriber_email]));
 
     const { data: payouts, error } = await context.supabase
       .from("payouts")
@@ -237,6 +247,8 @@ export const listMyPayouts = createServerFn({ method: "GET" })
       const stream = payment ? streamById.get(payment.stream_id) : undefined;
       const c = contribById.get(p.contributor_id);
       const batchSize = p.circle_tx_id ? txCounts.get(p.circle_tx_id) ?? 1 : 1;
+      const rawEmail = payment ? emailById.get(payment.id) ?? null : null;
+      const isOwner = stream ? ownedTeams.has(stream.team_id) : false;
       return {
         id: p.id,
         amount_usdc: Number(p.amount_usdc),
@@ -254,7 +266,7 @@ export const listMyPayouts = createServerFn({ method: "GET" })
           ? { id: c.id, name: c.name, role: c.role, wallet_address: c.wallet_address }
           : { id: p.contributor_id, name: "Unknown", role: "—", wallet_address: null },
         stream_name: stream?.name ?? "Stream",
-        subscriber_email: payment?.subscriber_email ?? null,
+        subscriber_email: isOwner ? rawEmail : maskEmail(rawEmail),
       };
     });
   });
