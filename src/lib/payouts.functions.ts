@@ -3,14 +3,25 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 /**
- * Execute all queued payouts for a single payment_event via Circle.
+ * Execute all queued payouts for a single payment_event as ONE batched
+ * on-chain transaction via Arc's predeployed Multicall3From contract.
+ *
  * - Skips contributors without a wallet_address (status='skipped').
- * - One transfer per payout; payout uuid is used as idempotency key.
- * - State transitions: queued -> submitted (after Circle accepts) -> confirmed (poll).
+ * - Skips dust (< 0.000001 USDC, below 6-decimal resolution).
+ * - Eligible payouts share one circle_tx_id and, after confirmation, one tx_hash.
+ * - Idempotency key = payment_event_id, so retries are safe.
+ * - State transitions: queued -> submitted (Circle accepted batch) -> confirmed.
  */
 export async function executePayoutsForPayment(paymentEventId: string) {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { createUsdcTransfer } = await import("./circle.server");
+  const { createContractExecution, getCircleWalletAddress } = await import("./circle.server");
+  const {
+    MULTICALL3_FROM_ADDRESS,
+    MULTICALL3_FROM_AGGREGATE3_SIGNATURE,
+    ARC_USDC_ADDRESS,
+    encodeErc20Transfer,
+    toUsdcBaseUnits,
+  } = await import("./multicall.server");
 
   const { data: payouts, error } = await supabaseAdmin
     .from("payouts")
@@ -18,11 +29,12 @@ export async function executePayoutsForPayment(paymentEventId: string) {
     .eq("payment_event_id", paymentEventId)
     .eq("status", "queued");
   if (error) throw new Error(error.message);
-  if (!payouts || payouts.length === 0) return { submitted: 0, skipped: 0, failed: 0 };
+  if (!payouts || payouts.length === 0) return { submitted: 0, skipped: 0, failed: 0, batchTxId: null };
 
-  let submitted = 0;
+  type Eligible = { payoutId: string; to: string; amount6dp: bigint };
+  const eligible: Eligible[] = [];
   let skipped = 0;
-  let failed = 0;
+
   for (const p of payouts) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dest = (p as any).contributors?.wallet_address as string | null | undefined;
@@ -42,32 +54,70 @@ export async function executePayoutsForPayment(paymentEventId: string) {
       skipped++;
       continue;
     }
-    try {
-      const tx = await createUsdcTransfer({
-        destinationAddress: dest,
-        amountUsdc: Number(p.amount_usdc),
-        idempotencyKey: p.id,
-      });
-      await supabaseAdmin
-        .from("payouts")
-        .update({
-          status: "submitted",
-          circle_tx_id: tx.id,
-          destination_address: dest,
-          submitted_at: new Date().toISOString(),
-          error: null,
-        })
-        .eq("id", p.id);
-      submitted++;
-    } catch (e) {
-      await supabaseAdmin
-        .from("payouts")
-        .update({ status: "failed", error: (e as Error).message.slice(0, 500) })
-        .eq("id", p.id);
-      failed++;
-    }
+    eligible.push({
+      payoutId: p.id,
+      to: dest,
+      amount6dp: toUsdcBaseUnits(Number(p.amount_usdc)),
+    });
   }
-  return { submitted, skipped, failed };
+
+  if (eligible.length === 0) {
+    return { submitted: 0, skipped, failed: 0, batchTxId: null };
+  }
+
+  // Build aggregate3 args: Call3[] = (target, allowFailure, callData)[]
+  const calls = eligible.map((e) => [
+    ARC_USDC_ADDRESS,
+    false,
+    encodeErc20Transfer(e.to, e.amount6dp),
+  ]);
+
+  // Sanity: Circle wallet must be reachable. We don't need the address for
+  // the batch encoding (Multicall3From reads `from` from the precompiled
+  // CallFrom context = the tx sender), but failing fast here gives a clean
+  // error message vs. an opaque Circle 400.
+  try {
+    await getCircleWalletAddress();
+  } catch (e) {
+    const msg = (e as Error).message.slice(0, 500);
+    const ids = eligible.map((x) => x.payoutId);
+    await supabaseAdmin.from("payouts").update({ status: "failed", error: msg }).in("id", ids);
+    return { submitted: 0, skipped, failed: ids.length, batchTxId: null };
+  }
+
+  try {
+    const tx = await createContractExecution({
+      contractAddress: MULTICALL3_FROM_ADDRESS,
+      abiFunctionSignature: MULTICALL3_FROM_AGGREGATE3_SIGNATURE,
+      abiParameters: [calls],
+      idempotencyKey: paymentEventId,
+    });
+
+    const ids = eligible.map((e) => e.payoutId);
+    // One UPDATE for the whole batch — they all share the circle_tx_id.
+    // destination_address is per-row, so do those individually (small N).
+    await supabaseAdmin
+      .from("payouts")
+      .update({
+        status: "submitted",
+        circle_tx_id: tx.id,
+        submitted_at: new Date().toISOString(),
+        error: null,
+      })
+      .in("id", ids);
+    for (const e of eligible) {
+      await supabaseAdmin
+        .from("payouts")
+        .update({ destination_address: e.to })
+        .eq("id", e.payoutId);
+    }
+    return { submitted: ids.length, skipped, failed: 0, batchTxId: tx.id };
+  } catch (e) {
+    const msg = (e as Error).message.slice(0, 500);
+    const ids = eligible.map((x) => x.payoutId);
+    await supabaseAdmin.from("payouts").update({ status: "failed", error: msg }).in("id", ids);
+    return { submitted: 0, skipped, failed: ids.length, batchTxId: null };
+  }
 }
 
 export const executePayouts = createServerFn({ method: "POST" })
@@ -95,14 +145,22 @@ export const refreshPayoutStatuses = createServerFn({ method: "POST" })
       .select("id, circle_tx_id, status")
       .eq("status", "submitted")
       .not("circle_tx_id", "is", null)
-      .limit(50);
+      .limit(200);
     if (!visible || visible.length === 0) return { updated: 0 };
 
-    let updated = 0;
+    // Group rows by circle_tx_id so a batched payout costs one Circle API call.
+    const byTx = new Map<string, string[]>();
     for (const row of visible) {
       if (!row.circle_tx_id) continue;
+      const list = byTx.get(row.circle_tx_id) ?? [];
+      list.push(row.id);
+      byTx.set(row.circle_tx_id, list);
+    }
+
+    let updated = 0;
+    for (const [txId, ids] of byTx.entries()) {
       try {
-        const tx = await getCircleTransaction(row.circle_tx_id);
+        const tx = await getCircleTransaction(txId);
         const s = tx.state?.toUpperCase();
         if (s === "COMPLETE" || s === "CONFIRMED") {
           await supabaseAdmin
@@ -112,17 +170,17 @@ export const refreshPayoutStatuses = createServerFn({ method: "POST" })
               tx_hash: tx.txHash ?? null,
               confirmed_at: new Date().toISOString(),
             })
-            .eq("id", row.id);
-          updated++;
+            .in("id", ids);
+          updated += ids.length;
         } else if (s === "FAILED" || s === "CANCELLED" || s === "DENIED") {
           await supabaseAdmin
             .from("payouts")
             .update({ status: "failed", error: tx.errorReason ?? s })
-            .eq("id", row.id);
-          updated++;
+            .in("id", ids);
+          updated += ids.length;
         }
       } catch (e) {
-        console.warn("[payouts] refresh failed for", row.id, (e as Error).message);
+        console.warn("[payouts] refresh failed for", txId, (e as Error).message);
       }
     }
     return { updated };
@@ -161,6 +219,12 @@ export const listMyPayouts = createServerFn({ method: "GET" })
       .limit(100);
     if (error) throw new Error(error.message);
 
+    // Mark rows that share a circle_tx_id as part of a batch — UI hint only.
+    const txCounts = new Map<string, number>();
+    for (const p of payouts ?? []) {
+      if (p.circle_tx_id) txCounts.set(p.circle_tx_id, (txCounts.get(p.circle_tx_id) ?? 0) + 1);
+    }
+
     const contribIds = Array.from(new Set((payouts ?? []).map((p) => p.contributor_id)));
     const { data: contribs } = await context.supabase
       .from("contributors")
@@ -172,6 +236,7 @@ export const listMyPayouts = createServerFn({ method: "GET" })
       const payment = paymentById.get(p.payment_event_id);
       const stream = payment ? streamById.get(payment.stream_id) : undefined;
       const c = contribById.get(p.contributor_id);
+      const batchSize = p.circle_tx_id ? txCounts.get(p.circle_tx_id) ?? 1 : 1;
       return {
         id: p.id,
         amount_usdc: Number(p.amount_usdc),
@@ -183,6 +248,8 @@ export const listMyPayouts = createServerFn({ method: "GET" })
         submitted_at: p.submitted_at,
         confirmed_at: p.confirmed_at,
         created_at: p.created_at,
+        batched: batchSize > 1,
+        batch_size: batchSize,
         contributor: c
           ? { id: c.id, name: c.name, role: c.role, wallet_address: c.wallet_address }
           : { id: p.contributor_id, name: "Unknown", role: "—", wallet_address: null },

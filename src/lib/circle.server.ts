@@ -137,3 +137,57 @@ export async function getCircleTransaction(id: string): Promise<{
   };
   return j.data.transaction;
 }
+
+let cachedWalletAddress: string | null = null;
+
+/** On-chain EOA address of the Circle developer-controlled wallet. */
+export async function getCircleWalletAddress(): Promise<string> {
+  if (cachedWalletAddress) return cachedWalletAddress;
+  const walletId = env("CIRCLE_WALLET_ID");
+  const r = await fetch(`${BASE}/v1/w3s/wallets/${walletId}`, {
+    headers: { Authorization: `Bearer ${env("CIRCLE_API_KEY")}` },
+  });
+  if (!r.ok) throw new Error(`Circle wallet fetch failed: ${r.status} ${await r.text()}`);
+  const j = (await r.json()) as { data: { wallet: { address: string } } };
+  cachedWalletAddress = j.data.wallet.address;
+  return cachedWalletAddress;
+}
+
+export type CircleContractExecutionResult = { id: string; state: string };
+
+/**
+ * Submit an arbitrary contract call from the Circle wallet. Used for batched
+ * payouts via Arc's Multicall3From. We pass `abiFunctionSignature` +
+ * `abiParameters` and let Circle ABI-encode the outer call — the inner
+ * USDC.transfer calldata is hand-encoded by the caller.
+ */
+export async function createContractExecution(opts: {
+  contractAddress: string;
+  abiFunctionSignature: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  abiParameters: any[];
+  idempotencyKey: string;
+}): Promise<CircleContractExecutionResult> {
+  const entitySecretCiphertext = await encryptEntitySecret();
+  const body = {
+    idempotencyKey: opts.idempotencyKey,
+    entitySecretCiphertext,
+    contractAddress: opts.contractAddress,
+    abiFunctionSignature: opts.abiFunctionSignature,
+    abiParameters: opts.abiParameters,
+    feeLevel: "MEDIUM",
+    walletId: env("CIRCLE_WALLET_ID"),
+  };
+  const r = await fetch(`${BASE}/v1/w3s/developer/transactions/contractExecution`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env("CIRCLE_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const txt = await r.text();
+  if (!r.ok) throw new Error(`Circle contractExecution failed: ${r.status} ${txt}`);
+  const j = JSON.parse(txt) as { data: { id: string; state: string } };
+  return { id: j.data.id, state: j.data.state };
+}
