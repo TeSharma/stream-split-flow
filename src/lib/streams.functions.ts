@@ -34,7 +34,9 @@ export const getStream = createServerFn({ method: "GET" })
   .handler(async ({ data, context }) => {
     const { data: stream, error } = await context.supabase
       .from("streams")
-      .select("id, team_id, name, source, ghost_site_url, webhook_secret, status, created_at")
+      .select(
+        "id, team_id, name, source, ghost_site_url, webhook_secret, status, created_at, ghost_content_api_key, ghost_last_sync_at",
+      )
       .eq("id", data.streamId)
       .single();
     if (error) throw new Error(error.message);
