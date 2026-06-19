@@ -284,6 +284,8 @@ export type Database = {
       streams: {
         Row: {
           created_at: string
+          ghost_content_api_key: string | null
+          ghost_last_sync_at: string | null
           ghost_site_url: string | null
           id: string
           name: string
@@ -294,6 +296,8 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          ghost_content_api_key?: string | null
+          ghost_last_sync_at?: string | null
           ghost_site_url?: string | null
           id?: string
           name: string
@@ -304,6 +308,8 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          ghost_content_api_key?: string | null
+          ghost_last_sync_at?: string | null
           ghost_site_url?: string | null
           id?: string
           name?: string
