@@ -235,6 +235,8 @@ export const getPendingProposals = createServerFn({ method: "GET" })
     return (proposals ?? []).map((p) => {
       const payment = paymentById.get(p.payment_event_id);
       const stream = payment ? streamById.get(payment.stream_id) : undefined;
+      const rawEmail = payment ? emailById.get(payment.id) ?? null : null;
+      const isOwner = stream ? ownedTeams.has(stream.team_id) : false;
       return {
         id: p.id,
         ai_percentages: p.ai_percentages as Record<string, number>,
@@ -245,7 +247,7 @@ export const getPendingProposals = createServerFn({ method: "GET" })
               id: payment.id,
               amount_cents: payment.amount_cents,
               currency: payment.currency,
-              subscriber_email: payment.subscriber_email,
+              subscriber_email: isOwner ? rawEmail : maskEmail(rawEmail),
               received_at: payment.received_at,
               stream_name: stream?.name ?? "Stream",
             }
