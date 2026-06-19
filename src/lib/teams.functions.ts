@@ -94,12 +94,32 @@ export const getRecentPayments = createServerFn({ method: "GET" })
     if (sErr) throw new Error(sErr.message);
     const ids = (streams ?? []).map((s) => s.id);
     if (ids.length === 0) return [];
+
+    // Non-sensitive columns via user client (RLS).
     const { data: payments, error } = await context.supabase
       .from("payment_events")
-      .select("id, stream_id, amount_cents, currency, status, received_at, subscriber_email")
+      .select("id, stream_id, amount_cents, currency, status, received_at")
       .in("stream_id", ids)
       .order("received_at", { ascending: false })
       .limit(50);
     if (error) throw new Error(error.message);
-    return payments ?? [];
+    const rows = payments ?? [];
+    if (rows.length === 0) return [];
+
+    // subscriber_email is restricted: owners see full, members see masked.
+    const { isTeamOwner, maskEmail } = await import("./access.server");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const owner = await isTeamOwner(context.supabase, data.teamId);
+    const { data: emailRows } = await supabaseAdmin
+      .from("payment_events")
+      .select("id, subscriber_email")
+      .in(
+        "id",
+        rows.map((r) => r.id),
+      );
+    const emailById = new Map((emailRows ?? []).map((r) => [r.id, r.subscriber_email]));
+    return rows.map((r) => {
+      const raw = emailById.get(r.id) ?? null;
+      return { ...r, subscriber_email: owner ? raw : maskEmail(raw) };
+    });
   });
