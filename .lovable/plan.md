@@ -1,74 +1,51 @@
-## Ghost integration plan
+# Batch payouts via Arc's Multicall3From
 
-You picked all four scopes + real Ghost site as the test source. Here's the build, sequenced so each step is testable on its own.
+Replace the loop of individual `createUsdcTransfer` calls in `executePayoutsForPayment` with **one** on-chain transaction that distributes USDC to every contributor in a payment, using Arc Testnet's predeployed `Multicall3From` contract. The Circle developer-controlled wallet stays — it just signs one contract call instead of N transfers.
 
-### 1. Schema — store Ghost API credentials per stream
+## Why this works on Arc
+- USDC is the native gas token, so the Circle wallet pays gas in USDC and transfers USDC value in the same tx — no separate gas top-up.
+- `Multicall3From` executes a batch of `(target, callData, value)` tuples *from the EOA's context*, so each inner `USDC.transfer(contributor, amount)` has `msg.sender == Circle wallet`. A vanilla Multicall3 would break ERC20 transfers (msg.sender would be the multicall contract).
 
-A new migration adds two columns to `streams`:
+## Changes
 
-- `ghost_content_api_key text` — Ghost Content API key (used to pull posts + authors)
-- `ghost_last_sync_at timestamptz` — surfaced in UI
+### 1. `src/lib/multicall.server.ts` (new)
+Pure helper, no Circle coupling:
+- `encodeErc20Transfer(to, amount6dp) -> 0x…` — ABI-encodes `transfer(address,uint256)` by hand (4-byte selector `0xa9059cbb` + 32-byte address + 32-byte amount) so we don't pull in viem/ethers.
+- `encodeMulticall3FromAggregate(from, calls[]) -> 0x…` — ABI-encodes the `aggregate` entrypoint with `{target, allowFailure:false, value:0, callData}` tuples and the `from` address.
+- Exports `MULTICALL3_FROM_ADDRESS` and `USDC_ADDRESS` (read from env, fall back to known Arc Testnet constants).
 
-No new tables. `contributors.ghost_author_id` and `content_items.ghost_post_id` already exist, so the upserts have a stable key.
+### 2. `src/lib/circle.server.ts` (extend)
+Add `createContractExecution({ contractAddress, callData, idempotencyKey, abiFunctionSignature? })`:
+- POSTs to `/v1/w3s/developer/transactions/contractExecution` with `walletId`, fresh `entitySecretCiphertext`, raw `callData`, and `feeLevel: "MEDIUM"`.
+- Returns `{ id, state }` shaped like `createUsdcTransfer` so the rest of the pipeline (status polling, `tx_hash`) is unchanged.
+- `getCircleTransaction` already works for contract execution txs — no change.
 
-The Content API key is low-risk (read-only, scoped to a single site) but still per-stream, so we keep it in the row rather than in shared secrets.
+### 3. `src/lib/payouts.functions.ts` (rewrite `executePayoutsForPayment`)
+- Load queued payouts + contributor wallet addresses as today.
+- Pre-flight filter: rows with no `wallet_address` or `< 0.000001 USDC` get marked `skipped` individually (same UX as today).
+- Build the eligible set. If empty → return early.
+- Resolve the Circle wallet's on-chain address once (cache it; fetched via `GET /v1/w3s/wallets/{id}` and reused).
+- Encode one `Multicall3From.aggregate` call containing one `USDC.transfer` per eligible payout. Amounts use 6-decimal USDC units (`BigInt(Math.round(amount * 1e6))`).
+- Idempotency key = `payment_event_id` (one batch per payment, safe to retry).
+- Submit via `createContractExecution`. On success, update **all** eligible payouts in one `UPDATE … WHERE id IN (…)` to `status='submitted'`, set the same `circle_tx_id`, `destination_address`, `submitted_at`.
+- On failure, mark the same set `failed` with the truncated error.
 
-### 2. Server functions (`src/lib/ghost.functions.ts`)
+### 4. `refreshPayoutStatuses` (small tweak)
+- Already polls by `circle_tx_id`. Because many payout rows now share one `circle_tx_id`, group by it before calling `getCircleTransaction` (one API call updates N rows). Keeps Circle API usage flat as batch sizes grow.
 
-- `updateGhostConnection({ streamId, ghostSiteUrl, ghostContentApiKey })` — saves URL + key on the stream. Auth-gated.
-- `syncGhostContent({ streamId })` — calls `GET {site}/ghost/api/content/posts/?key=...&include=authors&limit=50&fields=id,title,slug,custom_excerpt,excerpt,published_at`. Then:
-  - For each unique post author: upsert into `contributors` keyed by `ghost_author_id` (team-scoped). New authors land with `role='writer'` and no wallet — surfaced in UI so user can add a wallet.
-  - For each post: upsert into `content_items` keyed by `ghost_post_id` with `type='article'`, `title`, `body_excerpt` from `custom_excerpt || excerpt`, `contributor_id` resolved from primary author.
-  - Set `ghost_last_sync_at = now()`. Returns `{ postsSynced, contributorsAdded }`.
+### 5. Config / secrets
+- New optional env vars: `ARC_MULTICALL3_FROM_ADDRESS`, `ARC_USDC_ADDRESS`. Defaults baked in for Arc Testnet so nothing is required up front; we'll expose `add_secret` only if the user wants to override.
+- `CIRCLE_BLOCKCHAIN` must already be set to Arc Testnet (it is).
 
-Both use `requireSupabaseAuth` and admin client inside the handler (because `contributors` is team-scoped and we need to upsert by `ghost_author_id`).
+### 6. UI (minor)
+- `streams.$streamId.tsx` and payouts list already render `circle_tx_id` / `tx_hash`. With batching, every row in a payment shows the same hash — that's correct and worth a one-line "(batched)" hint next to the hash. No schema changes needed.
 
-### 3. Webhook hardening (`src/routes/api/public/ghost-webhook.ts`)
+## Out of scope / explicit non-goals
+- No new database columns. Sharing `circle_tx_id` across rows is fine; if we later want a dedicated `batch_id`, that's a follow-up.
+- No fallback to per-transfer mode. If the batch tx fails, the whole set is marked `failed` and the user retries — simpler than partial recovery and matches the "atomic distribution" goal.
+- No change to split-proposal logic or the AI agent.
 
-Ghost actually sends distinct events. We tighten the existing handler to:
-
-- Read event type from `request.headers.get('x-ghost-event')` (Ghost sets this) and the payload shape.
-- Process only paid subscription activations:
-  - `member.added` only when `member.current.subscriptions[0].status === 'active'` AND `plan.amount > 0`
-  - `subscription.activated`
-  - Ignore free signups, member updates without a new active paid sub, deletions, and anything else (return 200 OK so Ghost doesn't retry).
-- Parse `plan.amount` (already minor units) and `plan.currency` directly; drop the $5 default.
-- Keep idempotency on Ghost's real event id (fall back to `${subscriptionId}-${status}` if no top-level id), so a retry from Ghost doesn't double-pay.
-- Add structured logs (`event`, `streamId`, `amountCents`, `subscriberEmail`) for debugging real traffic.
-
-### 4. Stream detail UI (`streams.$streamId.tsx`)
-
-Add a new "Connect Ghost" card above the existing webhook card:
-
-- Inputs: Ghost site URL (e.g. `https://yourletter.ghost.io`) + Content API key. "Save" calls `updateGhostConnection`.
-- Once saved, show "Sync content now" button + "Last synced: 3m ago". Button calls `syncGhostContent` and toasts `Synced 12 posts, added 2 contributors`.
-
-The existing Ghost webhook card is updated with clearer step-by-step instructions:
-
-> 1. In Ghost Admin → **Settings → Integrations → + Custom integration**, name it "SplitAI".
-> 2. Click **+ Add webhook**. Event: `Member subscription created`. URL: (copy). Secret: (copy).
-> 3. Add a second webhook for `Member added` if you also want trial conversions.
-
-Plus a one-liner under contributors: "Auto-imported from Ghost authors when you sync."
-
-### 5. Out of scope (call out)
-
-- Ghost Admin API (would let us read drafts + author emails directly) — Content API is enough for the AI signal and avoids asking for an admin key.
-- Wallet address backfill for Ghost-imported contributors — user fills those in manually.
-- Auto-sync on a schedule — sync stays manual for now; we can add pg_cron later.
-
-### Technical notes
-
-- New file `src/lib/ghost.functions.ts` lives in `src/lib/` (client-safe path); admin client loaded inside `.handler()` via `await import('@/integrations/supabase/client.server')`.
-- Ghost Content API is a public HTTPS call from the Worker — fetch only, no SDK. Validate the URL with `new URL()` and force `https:` before calling.
-- Migration adds GRANTs only as needed (no new tables → no new grants); only `ALTER TABLE streams ADD COLUMN`.
-
-### Order of operations
-
-1. Migration: 2 new columns on `streams`.
-2. `src/lib/ghost.functions.ts` with both server fns.
-3. Harden `ghost-webhook.ts`.
-4. UI updates in `streams.$streamId.tsx`.
-5. You paste your Ghost site URL + Content API key, click Sync, then add the webhook in Ghost Admin and we test a real subscription end-to-end.
-
-Shall I proceed?
+## Verification
+1. Trigger a Ghost test webhook → confirm one `payment_events` row → call `executePayouts` from the stream page.
+2. Inspect `payouts` table: all rows for that payment share one `circle_tx_id`, status `submitted`.
+3. After Circle confirms, `refreshPayoutStatuses` flips them all to `confirmed` with the same `tx_hash`. Open the hash on Arc Testnet explorer and verify N `Transfer` events from the Circle wallet inside one transaction.
