@@ -41,20 +41,26 @@ function Payouts() {
   const qc = useQueryClient();
   const fn = useServerFn(listMyPayouts);
   const refreshFn = useServerFn(refreshPayoutStatuses);
+  const teamsFn = useServerFn(getMyTeams);
   const q = useQuery({ queryKey: ["my-payouts"], queryFn: () => fn() });
+  const teamsQ = useQuery({ queryKey: ["my-teams"], queryFn: () => teamsFn() });
 
-  // Realtime: refetch on any payouts row change
+  // Realtime: subscribe to per-team payout channels (RLS-scoped)
   useEffect(() => {
-    const channel = supabase
-      .channel("payouts-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "payouts" }, () => {
-        qc.invalidateQueries({ queryKey: ["my-payouts"] });
-      })
-      .subscribe();
+    const teams = teamsQ.data ?? [];
+    if (teams.length === 0) return;
+    const channels = teams.map((t) =>
+      supabase
+        .channel(`payouts-team-${t.id}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "payouts" }, () => {
+          qc.invalidateQueries({ queryKey: ["my-payouts"] });
+        })
+        .subscribe(),
+    );
     return () => {
-      supabase.removeChannel(channel);
+      channels.forEach((ch) => supabase.removeChannel(ch));
     };
-  }, [qc]);
+  }, [qc, teamsQ.data]);
 
   const refresh = useMutation({
     mutationFn: () => refreshFn(),
