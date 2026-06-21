@@ -4,6 +4,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { listMyPayouts, refreshPayoutStatuses } from "@/lib/payouts.functions";
+import { getMyTeams } from "@/lib/teams.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,20 +41,26 @@ function Payouts() {
   const qc = useQueryClient();
   const fn = useServerFn(listMyPayouts);
   const refreshFn = useServerFn(refreshPayoutStatuses);
+  const teamsFn = useServerFn(getMyTeams);
   const q = useQuery({ queryKey: ["my-payouts"], queryFn: () => fn() });
+  const teamsQ = useQuery({ queryKey: ["my-teams"], queryFn: () => teamsFn() });
 
-  // Realtime: refetch on any payouts row change
+  // Realtime: subscribe to per-team payout channels (RLS-scoped)
   useEffect(() => {
-    const channel = supabase
-      .channel("payouts-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "payouts" }, () => {
-        qc.invalidateQueries({ queryKey: ["my-payouts"] });
-      })
-      .subscribe();
+    const teams = teamsQ.data ?? [];
+    if (teams.length === 0) return;
+    const channels = teams.map((t) =>
+      supabase
+        .channel(`payouts-team-${t.id}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "payouts" }, () => {
+          qc.invalidateQueries({ queryKey: ["my-payouts"] });
+        })
+        .subscribe(),
+    );
     return () => {
-      supabase.removeChannel(channel);
+      channels.forEach((ch) => supabase.removeChannel(ch));
     };
-  }, [qc]);
+  }, [qc, teamsQ.data]);
 
   const refresh = useMutation({
     mutationFn: () => refreshFn(),
